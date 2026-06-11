@@ -19,6 +19,10 @@ scripts/.versions.json
 *.log
 npm-debug.log*
 
+# Local dev runtime/state
+.codex-runtime/
+.codex-dev-user-data/
+
 # OS files
 .DS_Store
 Thumbs.db

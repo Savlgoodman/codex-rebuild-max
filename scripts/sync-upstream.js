@@ -72,13 +72,31 @@ function extractArchive(archive, dest) {
     execSync(`ditto -xk "${archive}" "${dest}"`);
   } else {
     // 7zz for Windows MSIX and Linux (symlinks don't matter — only ASAR content used)
-    for (const bin of ["7zz", "7z"]) {
+    const sevenZipBins = [
+      "7zz",
+      "7z",
+      process.platform === "win32" && process.env.ProgramFiles
+        ? path.join(process.env.ProgramFiles, "7-Zip", "7z.exe")
+        : null,
+      process.platform === "win32" && process.env["ProgramFiles(x86)"]
+        ? path.join(process.env["ProgramFiles(x86)"], "7-Zip", "7z.exe")
+        : null,
+    ].filter(Boolean);
+    for (const bin of sevenZipBins) {
       try {
-        execSync(`${bin} x -y -o"${dest}" "${archive}"`, { stdio: "pipe" });
+        const command = bin.includes(path.sep) || bin.includes(" ") ? `"${bin}"` : bin;
+        execSync(`${command} x -y -o"${dest}" "${archive}"`, { stdio: "pipe" });
         return;
       } catch {
         if (fs.readdirSync(dest).length > 0) return;
       }
+    }
+    // Windows ships bsdtar, and MSIX packages are zip-compatible.
+    try {
+      execSync(`tar -xf "${archive}" -C "${dest}"`, { stdio: "pipe" });
+      return;
+    } catch {
+      if (fs.readdirSync(dest).length > 0) return;
     }
     throw new Error(`Failed to extract ${archive}`);
   }
@@ -103,6 +121,32 @@ function copyRecursive(src, dest) {
     else { fs.copyFileSync(s, d); count++; }
   }
   return count;
+}
+
+function normalizeMsixScopedPackageDirs(root) {
+  const dirs = [];
+  function walk(dir) {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (!e.isDirectory()) continue;
+      walk(full);
+      if (e.name.toLowerCase().includes("%40")) dirs.push(full);
+    }
+  }
+
+  walk(root);
+
+  for (const oldPath of dirs) {
+    if (!fs.existsSync(oldPath)) continue;
+    const newPath = path.join(path.dirname(oldPath), path.basename(oldPath).replace(/%40/gi, "@"));
+    if (oldPath === newPath) continue;
+    if (fs.existsSync(newPath)) {
+      copyRecursive(oldPath, newPath);
+      fs.rmSync(oldPath, { recursive: true, force: true });
+    } else {
+      fs.renameSync(oldPath, newPath);
+    }
+  }
 }
 
 function clearDir(dir) {
@@ -200,6 +244,7 @@ async function syncWin(destDir) {
   console.log("   [unzip]");
   clearDir(extractDir);
   extractArchive(msixPath, extractDir);
+  normalizeMsixScopedPackageDirs(extractDir);
 
   const resourcesDir = path.join(extractDir, "app", "resources");
   if (!fs.existsSync(resourcesDir)) {
