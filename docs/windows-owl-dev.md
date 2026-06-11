@@ -225,3 +225,39 @@ remote control requires ChatGPT authentication; API key auth is not supported
 
 1. 官方接口协议方向：拦截或替换 remote control websocket endpoint，验证自建 relay 的消息形态。
 2. 原生控制函数方向：在 Electron main/app-server bridge 附近接入本地 HTTP/WebSocket bridge，直接调用现有控制函数或转发 MCP/app-server 请求。
+
+## Patch 开发闭环
+
+这个仓库很适合“先改、再 sync、再抽 patch”的方式。推荐流程是：
+
+1. 先在 `src/win/_asar` 或对应平台目录里做一次手工修改。
+2. 把这次改动的文件复制到一个临时快照目录，例如 `temp/feature-snapshot/`。
+3. 重新执行 `npm run sync -- --skip-mac`，拿到一份干净的 upstream 解包结果。
+4. 用脚本对比 `temp/feature-snapshot/` 和新解包的 `src/win/_asar`，提取差异。
+5. 将差异自动生成新的 `scripts/patch-*.js`。
+6. 把这个 patch 脚本接入 `scripts/patch-all.js`，保证以后每次 sync 都能自动重放。
+
+我更建议“复制到 temp 快照”，不要真的把 tracked 文件从 git 工作区里移动出去。这样可以保留对照基线，也能避免后续 diff、恢复和自动化脚本写得太脆。
+
+### 适用场景
+
+- 单个 UI 页面注入。
+- 某个设置卡片、按钮、路由或文案的增删改。
+- 对压缩 bundle 做稳定的字符串/AST 替换。
+
+### 生成 patch 的建议
+
+- 优先用 AST 匹配，别依赖变量名。
+- 如果只能字符串替换，目标片段要尽量短，但上下文要足够唯一。
+- 新增页面 chunk 时，最好把页面内容也写进 patch 脚本里，保证 sync 后可以重建。
+- 生成后立刻跑一次 `--check`，再跑一次 `sync -> patch -> dev`，确认幂等。
+
+### 当前示例
+
+远控设置已经按这套方式沉淀成：
+
+```text
+scripts/patch-remote-control-settings.js
+```
+
+以后如果要继续加新的设置页或 patch，这个脚本可以直接当模板。
